@@ -172,70 +172,66 @@ def room(room_id):
 
 # -------------------------------- API ROUTES ----------------------------------
 
-# POST to change the user's name
-@app.route('/api/user/name', methods=['POST'])
-def update_username():
-    user = get_user_from_cookie(request)
-    if user is None:
-        return jsonify({'error': 'Unauthorized'}), 401
+# Middleware function to check API key in request headers
+def require_api_key(func):
+    @wraps(func)
+    def decorated(*args, **kwargs):
+        api_key = request.headers.get('API-Key')
+        if not api_key:
+            return jsonify({'error': 'API key is missing'}), 401
+        user = query_db('SELECT * FROM users WHERE api_key = ?', [api_key], one=True)
+        if not user:
+            return jsonify({'error': 'Invalid API key'}), 403
+        return func(*args, **kwargs)
+    return decorated
 
-    new_name = request.json.get('name')
-    if not new_name:
-        return jsonify({'error': 'Name not provided'}), 400
-
-    query_db('update users set name = ? where id = ?', [new_name, user['id']])
-    return jsonify({'message': 'Username updated successfully'}), 200
-
-# POST to change the user's password
-@app.route('/api/user/password', methods=['POST'])
-def update_password():
-    user = get_user_from_cookie(request)
-    if user is None:
-        return jsonify({'error': 'Unauthorized'}), 401
-
-    new_password = request.json.get('password')
-    if not new_password:
-        return jsonify({'error': 'Password not provided'}), 400
-
-    query_db('update users set password = ? where id = ?', [new_password, user['id']])
-    return jsonify({'message': 'Password updated successfully'}), 200
-
-# POST to change the name of a room
-@app.route('/api/room/name/<int:room_id>', methods=['POST'])
-def update_room_name(room_id):
-    user = get_user_from_cookie(request)
-    if user is None:
-        return jsonify({'error': 'Unauthorized'}), 401
-
-    new_name = request.json.get('name')
-    if not new_name:
-        return jsonify({'error': 'Name not provided'}), 400
-
-    query_db('update rooms set name = ? where id = ?', [new_name, room_id])
-    return jsonify({'message': 'Room name updated successfully'}), 200
-
-# GET to get all the messages in a room
-@app.route('/api/messages/<int:room_id>', methods=['GET'])
+# GET endpoint to retrieve all messages in a room
+@app.route('/api/messages/<int:room_id>')
+@require_api_key
 def get_messages(room_id):
-    user = get_user_from_cookie(request)
-    if user is None:
-        return jsonify({'error': 'Unauthorized'}), 401
+    messages = query_db('SELECT * FROM messages WHERE room_id = ?', [room_id])
+    return jsonify(messages)
 
-    messages = query_db('select * from messages where room_id = ?', [room_id])
-    return jsonify({'messages': messages}), 200
-
-# POST to post a new message to a room
+# POST endpoint to post a new message to a room
 @app.route('/api/messages/<int:room_id>', methods=['POST'])
+@require_api_key
 def post_message(room_id):
-    user = get_user_from_cookie(request)
-    if user is None:
-        return jsonify({'error': 'Unauthorized'}), 401
+    user_id = request.json.get('user_id')
+    body = request.json.get('body')
+    if not (user_id and body):
+        return jsonify({'error': 'User ID and message body are required'}), 400
+    query_db('INSERT INTO messages (user_id, room_id, body) VALUES (?, ?, ?)', [user_id, room_id, body])
+    return jsonify({'message': 'Message posted successfully'})
 
-    message = request.json.get('message')
-    if not message:
-        return jsonify({'error': 'Message not provided'}), 400
+# POST endpoint to update the user's name
+@app.route('/api/user/name', methods=['POST'])
+@require_api_key
+def update_username():
+    user_id = request.json.get('user_id')
+    new_name = request.json.get('new_name')
+    if not (user_id and new_name):
+        return jsonify({'error': 'User ID and new name are required'}), 400
+    query_db('UPDATE users SET name = ? WHERE id = ?', [new_name, user_id])
+    return jsonify({'message': 'Username updated successfully'})
 
-    query_db('insert into messages (user_id, room_id, message, timestamp) values (?, ?, ?, ?)',
-             [user['id'], room_id, message, datetime.now()])
-    return jsonify({'message': 'Message posted successfully'}), 200
+# POST endpoint to update the user's password
+@app.route('/api/user/password', methods=['POST'])
+@require_api_key
+def update_password():
+    user_id = request.json.get('user_id')
+    new_password = request.json.get('new_password')
+    if not (user_id and new_password):
+        return jsonify({'error': 'User ID and new password are required'}), 400
+    query_db('UPDATE users SET password = ? WHERE id = ?', [new_password, user_id])
+    return jsonify({'message': 'Password updated successfully'})
 
+# POST endpoint to update the name of a room
+@app.route('/api/room/name', methods=['POST'])
+@require_api_key
+def update_room_name():
+    room_id = request.json.get('room_id')
+    new_name = request.json.get('new_name')
+    if not (room_id and new_name):
+        return jsonify({'error': 'Room ID and new name are required'}), 400
+    query_db('UPDATE rooms SET name = ? WHERE id = ?', [new_name, room_id])
+    return jsonify({'message': 'Room name updated successfully'})

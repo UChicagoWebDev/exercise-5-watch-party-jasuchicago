@@ -7,6 +7,7 @@
   <link rel="stylesheet" type="text/css" href="/static/style.css"></link>
   <script>
     {% if user %}
+    const ROOM_ID = {{ room.id }};
     WATCH_PARTY_USER_ID = {{ user.id }};
     WATCH_PARTY_API_KEY = '{{ user.api_key }}';
     {% endif %}
@@ -25,7 +26,7 @@
       <!-- TODO: when clicked, 
         - remove `hide` from the `edit` h3 below
         - add `hide` to the parent h3 here -->
-      <a href="#"><span class="material-symbols-outlined">edit</span></a></h3>
+        <a href="#" onclick="toggleRoomNameEdit()"><span class="material-symbols-outlined">edit</span></a>
     </h3>
     <h3 class="edit hide">
       <input value="{{ room['name'] }}">
@@ -34,7 +35,7 @@
         - update `roomName` above with the new name
         - remove `hide` from the `display` h3 above
         - add `hide` to the parent h3 here -->
-      <a href="#"><span class="material-symbols-outlined">save</span></a></h3>
+        <a href="#" onclick="saveRoomName()"><span class="material-symbols-outlined">save</span></a>
     </h3>
     <div class="invite">
       Invite users to this chat at:
