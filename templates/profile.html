@@ -12,6 +12,7 @@
     WATCH_PARTY_API_KEY = '{{ user.api_key }}';
     {% endif %}
   </script>
+  <script src="/static/script.js"></script>
 </head>
 <body>
 <div class="container">
@@ -19,12 +20,13 @@
   <div class="auth">
     <h2>Welcome to Watch Party!</h2>
     <div class="profileDetails">
-      <label  class="username" for="username">Your username is: </label>
-      <input  class="username" name="username" class="mono" value="{{ user.name }}">
-      <button class="username">Update</button>
-      <label  class="password" for="password">Your password is: </label>
-      <input  class="password" name="password" class="mono" value="{{ user.password }}">
-      <button class="password">Update</button>
+      <label class="username" for="username">Your username is: </label>
+      <input class="usernameInput mono" name="username" value="{{ user.name }}">
+      <button class="updateUsername">Update</button>
+      
+      <label class="password" for="password">Your password is: </label>
+      <input class="passwordInput mono" name="password" value="{{ user.password }}">
+      <button class="updatePassword">Update</button>
     </div>
     <p>
       Your user ID and API Key are available on every page as the javascript variables
@@ -35,9 +37,19 @@
       <a href="/">Cool, let's go!</a>
     </p>
   </div>
-
+  <div id="passwordUpdateSuccessMessage" style="display: none; background-color: #50a452; color: white; padding: 10px; margin-bottom: 10px;">
+    Password updated successfully!
+  </div>
+  <div id="usernameUpdateSuccessMessage" style="display: none; background-color: #50a452; color: white; padding: 10px; margin-bottom: 10px;">
+    Username updated successfully!
+  </div>
 
 </div>
 
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    initializeProfilePage();
+  });
+</script>
 </body>
 </html>

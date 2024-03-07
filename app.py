@@ -14,12 +14,38 @@ app = Flask(__name__)
 # but don't change them here.
 app.debug = True
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+
+# Define a decorator function to validate the API key
+def require_api_key(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        # Get the API key from the request header
+        api_key = request.headers.get('X-API-Key')
+
+        # Get all user API keys from the database
+        user_api_keys = get_all_user_api_keys()
+
+        # Check if the API key is valid by comparing with the user API keys
+        if api_key not in user_api_keys:
+            return jsonify({'error': 'Invalid API key'}), 403
+        print("api_key is valid, call original function.")
+        # If the API key is valid, call the original function
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def get_all_user_api_keys():
+    # Query the database to get all user API keys
+    rows = query_db('SELECT api_key FROM users')
+    # Extract API keys from the database rows
+    api_keys = [row['api_key'] for row in rows]
+    return api_keys
+
 @app.after_request
 def add_header(response):
     response.headers["Cache-Control"] = "no-cache"
     return response
-
-
 
 def get_db():
     db = getattr(g, '_database', None)
@@ -54,18 +80,18 @@ def query_db(query, args=(), one=False):
 def new_user():
     name = "Unnamed User #" + ''.join(random.choices(string.digits, k=6))
     password = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
+    cookie = ''.join(random.choices(string.ascii_lowercase + string.digits, k=40))
     api_key = ''.join(random.choices(string.ascii_lowercase + string.digits, k=40))
-    u = query_db('insert into users (name, password, api_key) ' + 
-        'values (?, ?, ?) returning id, name, password, api_key',
-        (name, password, api_key),
+    u = query_db('INSERT INTO users (name, password, cookie, api_key) ' + 
+        'values (?, ?, ?, ?) returning id, name, password, cookie, api_key',
+        (name, password, cookie, api_key),
         one=True)
     return u
 
 def get_user_from_cookie(request):
-    user_id = request.cookies.get('user_id')
-    password = request.cookies.get('user_password')
-    if user_id and password:
-        return query_db('select * from users where id = ? and password = ?', [user_id, password], one=True)
+    cookie = request.cookies.get('watch_party_cookie')
+    if cookie:
+        return query_db('SELECT * FROM users where cookie = ?', [cookie], one=True)
     return None
 
 def render_with_error_handling(template, **kwargs):
@@ -83,7 +109,7 @@ def index():
     user = get_user_from_cookie(request)
 
     if user:
-        rooms = query_db('select * from rooms')
+        rooms = query_db('SELECT * FROM rooms')
         return render_with_error_handling('index.html', user=user, rooms=rooms)
     
     return render_with_error_handling('index.html', user=None, rooms=None)
@@ -96,7 +122,7 @@ def create_room():
 
     if (request.method == 'POST'):
         name = "Unnamed Room " + ''.join(random.choices(string.digits, k=6))
-        room = query_db('insert into rooms (name) values (?) returning id', [name], one=True)            
+        room = query_db('INSERT INTO rooms (name) values (?) returning id', [name], one=True)            
         return redirect(f'{room["id"]}')
     else:
         return app.send_static_file('create_room.html')
@@ -118,8 +144,7 @@ def signup():
             print(f'{key}: {u[key]}')
 
         resp = redirect('/profile')
-        resp.set_cookie('user_id', str(u['id']))
-        resp.set_cookie('user_password', u['password'])
+        resp.set_cookie('watch_party_cookie', str(u['cookie']))
         return resp
     
     return redirect('/login')
@@ -144,8 +169,8 @@ def login():
     
     if request.method == 'POST':
         name = request.form['name']
-        password = request.form['name']
-        u = query_db('select * from users where name = ? and password = ?', [name, password], one=True)
+        password = request.form['password']
+        u = query_db('SELECT * FROM users WHERE name = ? and password = ?', [name, password], one=True)
         if user:
             resp = make_response(redirect("/"))
             resp.set_cookie('user_id', u.id)
@@ -157,8 +182,7 @@ def login():
 @app.route('/logout')
 def logout():
     resp = make_response(redirect('/'))
-    resp.set_cookie('user_id', '')
-    resp.set_cookie('user_password', '')
+    resp.set_cookie('watch_party_cookie', '')
     return resp
 
 @app.route('/rooms/<int:room_id>')
@@ -166,72 +190,118 @@ def room(room_id):
     user = get_user_from_cookie(request)
     if user is None: return redirect('/')
 
-    room = query_db('select * from rooms where id = ?', [room_id], one=True)
+    room = query_db('SELECT * FROM rooms WHERE id = ?', [room_id], one=True)
     return render_with_error_handling('room.html',
             room=room, user=user)
 
 # -------------------------------- API ROUTES ----------------------------------
 
-# Middleware function to check API key in request headers
-def require_api_key(func):
-    @wraps(func)
-    def decorated(*args, **kwargs):
-        api_key = request.headers.get('API-Key')
-        if not api_key:
-            return jsonify({'error': 'API key is missing'}), 401
-        user = query_db('SELECT * FROM users WHERE api_key = ?', [api_key], one=True)
-        if not user:
-            return jsonify({'error': 'Invalid API key'}), 403
-        return func(*args, **kwargs)
-    return decorated
 
-# GET endpoint to retrieve all messages in a room
-@app.route('/api/messages/<int:room_id>')
-@require_api_key
-def get_messages(room_id):
-    messages = query_db('SELECT * FROM messages WHERE room_id = ?', [room_id])
-    return jsonify(messages)
-
-# POST endpoint to post a new message to a room
-@app.route('/api/messages/<int:room_id>', methods=['POST'])
-@require_api_key
-def post_message(room_id):
-    user_id = request.json.get('user_id')
-    body = request.json.get('body')
-    if not (user_id and body):
-        return jsonify({'error': 'User ID and message body are required'}), 400
-    query_db('INSERT INTO messages (user_id, room_id, body) VALUES (?, ?, ?)', [user_id, room_id, body])
-    return jsonify({'message': 'Message posted successfully'})
-
-# POST endpoint to update the user's name
+# POST to change the user's name
 @app.route('/api/user/name', methods=['POST'])
 @require_api_key
 def update_username():
-    user_id = request.json.get('user_id')
-    new_name = request.json.get('new_name')
-    if not (user_id and new_name):
-        return jsonify({'error': 'User ID and new name are required'}), 400
-    query_db('UPDATE users SET name = ? WHERE id = ?', [new_name, user_id])
-    return jsonify({'message': 'Username updated successfully'})
+    new_username = request.json.get('username')
+    if new_username:
+        # Get the current user id
+        user_id = request.json.get('user_id')
+        if not user_id:
+            return {'error': 'User ID not provided'}, 400
 
-# POST endpoint to update the user's password
+        try:
+            # Update the username in the database
+            db = get_db()
+            db.execute('UPDATE users SET name = ? WHERE id = ?', (new_username, user_id))
+            db.commit()
+            return {'message': 'Username updated successfully'}, 200
+        except Exception as e:
+            return {'error': str(e)}, 500
+    else:
+        return {'error': 'New username not provided'}, 400
+
+# POST to change the user's password
 @app.route('/api/user/password', methods=['POST'])
 @require_api_key
 def update_password():
-    user_id = request.json.get('user_id')
-    new_password = request.json.get('new_password')
-    if not (user_id and new_password):
-        return jsonify({'error': 'User ID and new password are required'}), 400
-    query_db('UPDATE users SET password = ? WHERE id = ?', [new_password, user_id])
-    return jsonify({'message': 'Password updated successfully'})
+    new_password = request.json.get('password')
+    if new_password:
+        # Get the current user id
+        user_id = request.json.get('user_id')
+        if not user_id:
+            return {'error': 'User ID not provided'}, 400
 
-# POST endpoint to update the name of a room
+        try:
+            # Update the password in the database
+            db = get_db()
+            db.execute('UPDATE users SET password = ? WHERE id = ?', (new_password, user_id))
+            db.commit()
+            return {'message': 'Password updated successfully'}, 200
+        except Exception as e:
+            return {'error': str(e)}, 500
+    else:
+        return {'error': 'New password not provided'}, 400
+
+# POST to change the name of a room
 @app.route('/api/room/name', methods=['POST'])
 @require_api_key
 def update_room_name():
-    room_id = request.json.get('room_id')
-    new_name = request.json.get('new_name')
-    if not (room_id and new_name):
-        return jsonify({'error': 'Room ID and new name are required'}), 400
-    query_db('UPDATE rooms SET name = ? WHERE id = ?', [new_name, room_id])
-    return jsonify({'message': 'Room name updated successfully'})
+    new_room_name = request.json.get('room_name')
+    if new_room_name:
+        # Get the current room ID
+        room_id = request.json.get('room_id')
+        if not room_id:
+            return {'error': 'Room ID not provided'}, 400
+
+        try:
+            # Update the room name in the database
+            db = get_db()
+            db.execute('UPDATE rooms SET name = ? WHERE id = ?', (new_room_name, room_id))
+            db.commit()
+            return {'message': 'Room name updated successfully'}, 200
+        except Exception as e:
+            return {'error': str(e)}, 500
+    else:
+        return {'error': 'New room name not provided'}, 400
+
+
+# GET to get all the messages in a room
+@app.route('/api/room/<int:room_id>/messages', methods=['GET'])
+@require_api_key
+def get_room_messages(room_id):
+    try:
+        # Get all messages from database
+        messages = query_db('SELECT * FROM messages WHERE room_id = ?', [room_id])
+
+        # Convert db rows to dictionaries
+        messages_dict = [dict(row) for row in messages]
+
+        # Return result as JSON
+        return jsonify(messages_dict), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# POST to post a new message to a room
+@app.route('/api/room/<int:room_id>/messages', methods=['POST'])
+@require_api_key
+def post_message(room_id):
+    # Get the message content and user ID from the request
+    content = request.json.get('message')
+    print("content: " + content)
+    user_id = request.json.get('user_id')
+    # Check if content and user ID are provided
+    if not content or not user_id:
+        return jsonify({'error': 'Content and user_id are required'}), 400
+
+    try:
+        # INSERT the message into the database
+        db = get_db()
+        db.execute('INSERT INTO messages (user_id, room_id, body) VALUES (?, ?, ?)',
+                   [user_id, room_id, content])
+        db.commit()
+
+        # Return success response
+        return jsonify({'success': True}), 201
+    except Exception as e:
+        # Return error response
+        return jsonify({'error': str(e)}), 500
